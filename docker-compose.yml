@@ -2,6 +2,9 @@
 # Observability stack for Agentic RAG for Dummies
 # PyConf Hyderabad 2026 — live demo
 #
+# Based on the official Langfuse docker-compose.yml:
+#   https://github.com/langfuse/langfuse/blob/main/docker-compose.yml
+#
 # Services:
 #   Phoenix     → http://localhost:6006   (Arize Phoenix UI + OTLP)
 #   Langfuse    → http://localhost:3000   (Langfuse UI)
@@ -24,7 +27,7 @@
 services:
 
   # ----------------------------------------------------------
-  # PHOENIX — Arize observability (already running)
+  # PHOENIX — Arize observability
   # ----------------------------------------------------------
   phoenix:
     image: arizephoenix/phoenix:latest
@@ -37,55 +40,57 @@ services:
   # ----------------------------------------------------------
   postgres:
     image: postgres:17
-    restart: unless-stopped
+    restart: always
     environment:
-      POSTGRES_USER: langfuse
-      POSTGRES_PASSWORD: langfuse
-      POSTGRES_DB: langfuse
-      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      TZ: UTC
+      PGTZ: UTC
     volumes:
       - langfuse_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
-      interval: 5s
-      timeout: 5s
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
       retries: 10
 
   # ----------------------------------------------------------
   # CLICKHOUSE — Langfuse trace/observation storage
   # ----------------------------------------------------------
   clickhouse:
-    image: clickhouse/clickhouse-server:24.12
-    restart: unless-stopped
+    image: docker.io/clickhouse/clickhouse-server
+    restart: always
+    user: "101:101"
     environment:
-      CLICKHOUSE_DB: langfuse
-      CLICKHOUSE_USER: langfuse
-      CLICKHOUSE_PASSWORD: langfuse
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
     volumes:
       - langfuse_clickhouse_data:/var/lib/clickhouse
       - langfuse_clickhouse_logs:/var/log/clickhouse-server
-      # Keeper (built-in ZooKeeper) + single-node cluster config.
-      # Langfuse uses ON CLUSTER default + ReplicatedMergeTree — both require these.
-      - ./clickhouse/config.d/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro
-      - ./clickhouse/config.d/cluster.xml:/etc/clickhouse-server/config.d/cluster.xml:ro
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 10
+      start_period: 1s
 
   # ----------------------------------------------------------
   # REDIS — Langfuse queue + cache
   # ----------------------------------------------------------
   redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: redis-server --requirepass langfuse
+    image: redis:7
+    restart: always
+    command: >-
+      --requirepass myredissecret
+      --maxmemory-policy noeviction
+    volumes:
+      - langfuse_redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "langfuse", "ping"]
-      interval: 5s
-      timeout: 5s
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 10s
       retries: 10
 
   # ----------------------------------------------------------
@@ -93,10 +98,11 @@ services:
   # ----------------------------------------------------------
   minio:
     image: minio/minio:latest
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
+    restart: always
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
     ports:
-      - "9000:9000"
+      - "9090:9000"
       - "9001:9001"
     environment:
       MINIO_ROOT_USER: minio
@@ -105,117 +111,94 @@ services:
       - langfuse_minio_data:/data
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
+      interval: 1s
       timeout: 5s
-      retries: 20
-
-  # One-shot container that creates the 'langfuse' bucket in MinIO
-  minio-createbuckets:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-        mc alias set local http://minio:9000 minio miniosecret &&
-        mc mb --ignore-existing local/langfuse &&
-        echo 'Bucket langfuse ready.'
-      "
-    restart: "no"
-
-  # ----------------------------------------------------------
-  # LANGFUSE WEB — UI + API (port 3000)
-  # ----------------------------------------------------------
-  langfuse-web:
-    image: langfuse/langfuse:3
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-      minio-createbuckets:
-        condition: service_completed_successfully
-    ports:
-      - "3000:3000"
-    environment:
-      DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
-      DIRECT_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
-
-      # Generate your own: openssl rand -hex 32
-      NEXTAUTH_SECRET: 2fcce62d95f8d1d2e0984ca097e74ba749ecb3330c1afc3d4599ff4f1d80885c
-      ENCRYPTION_KEY: 2fcce62d95f8d1d2e0984ca097e74ba749ecb3330c1afc3d4599ff4f1d80885c
-      NEXTAUTH_URL: http://localhost:3000
-      SALT: ragwatch-pyconf-hyd-2026
-
-      # ClickHouse
-      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse@clickhouse:9000/langfuse
-      CLICKHOUSE_URL: http://clickhouse:8123
-      CLICKHOUSE_USER: langfuse
-      CLICKHOUSE_PASSWORD: langfuse
-      CLICKHOUSE_CLUSTER_ENABLED: "true"
-
-      # Redis
-      REDIS_CONNECTION_STRING: redis://:langfuse@redis:6379
-
-      # MinIO / S3 blob store
-      LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
-      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
-      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
-      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
-      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
-      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
-      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
-
-      # Telemetry (disable phoning home in demo)
-      TELEMETRY_ENABLED: "false"
-      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
+      retries: 5
+      start_period: 1s
 
   # ----------------------------------------------------------
   # LANGFUSE WORKER — background job processor
   # ----------------------------------------------------------
   langfuse-worker:
     image: langfuse/langfuse-worker:3
-    restart: unless-stopped
-    depends_on:
+    restart: always
+    depends_on: &langfuse-depends-on
       postgres:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       minio:
         condition: service_healthy
-      minio-createbuckets:
-        condition: service_completed_successfully
-    environment:
-      DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
-      DIRECT_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
-
-      ENCRYPTION_KEY: 2fcce62d95f8d1d2e0984ca097e74ba749ecb3330c1afc3d4599ff4f1d80885c
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment: &langfuse-worker-env
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      NEXTAUTH_URL: http://localhost:3000
       SALT: ragwatch-pyconf-hyd-2026
+      ENCRYPTION_KEY: 2fcce62d95f8d1d2e0984ca097e74ba749ecb3330c1afc3d4599ff4f1d80885c
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
 
-      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse@clickhouse:9000/langfuse
+      # ClickHouse
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
       CLICKHOUSE_URL: http://clickhouse:8123
-      CLICKHOUSE_USER: langfuse
-      CLICKHOUSE_PASSWORD: langfuse
-      CLICKHOUSE_CLUSTER_ENABLED: "true"
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
 
-      REDIS_CONNECTION_STRING: redis://:langfuse@redis:6379
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: myredissecret
 
-      LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
+      # MinIO / S3 event upload
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
-      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
-      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
       LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
       LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: "events/"
 
-      TELEMETRY_ENABLED: "false"
+      # MinIO / S3 media upload
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://localhost:9090
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: "media/"
+
+  # ----------------------------------------------------------
+  # LANGFUSE WEB — UI + API (port 3000)
+  # ----------------------------------------------------------
+  langfuse-web:
+    image: langfuse/langfuse:3
+    restart: always
+    depends_on: *langfuse-depends-on
+    ports:
+      - "3000:3000"
+    environment:
+      <<: *langfuse-worker-env
+      NEXTAUTH_SECRET: 2fcce62d95f8d1d2e0984ca097e74ba749ecb3330c1afc3d4599ff4f1d80885c
+
+  # ----------------------------------------------------------
+  # CLICKHOUSE INIT VIEWS — workaround for Langfuse bug #11924
+  # Creates events_core and events_full views that are missing
+  # from production ClickHouse migrations.
+  # Runs once after langfuse-web finishes its migrations.
+  # ----------------------------------------------------------
+  clickhouse-init-views:
+    image: docker.io/clickhouse/clickhouse-server
+    restart: "no"
+    depends_on:
+      langfuse-web:
+        condition: service_started
+      clickhouse:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c", "echo 'Waiting for Langfuse migrations...' && sleep 30 && echo 'Creating events_core and events_full views...' && clickhouse-client --host clickhouse --user clickhouse --password clickhouse --multiquery --queries-file /init/init-events-views.sql && echo 'Done.'"]
+    volumes:
+      - ./clickhouse/init-events-views.sql:/init/init-events-views.sql:ro
 
 
 # ----------------------------------------------------------
@@ -226,3 +209,4 @@ volumes:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
   langfuse_minio_data:
+  langfuse_redis_data:

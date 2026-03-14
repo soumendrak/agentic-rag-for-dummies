@@ -57,6 +57,7 @@ def _langfuse_exporter():
     exporter = OTLPSpanExporter(
         endpoint=endpoint,
         headers={"Authorization": f"Basic {auth}"},
+        timeout=30,
     )
 
     # Hook into the underlying requests.Session to log the full response body
