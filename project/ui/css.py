@@ -2,16 +2,22 @@ custom_css = """
     /* ============================================
        MAIN CONTAINER
        ============================================ */
-    .progress-text { 
+    .progress-text {
         display: none !important;
     }
-    
-    .gradio-container { 
+
+    body, html {
+        background: #0f0f0f !important;
+        color: #e5e5e5 !important;
+    }
+
+    .gradio-container {
         max-width: 1000px !important;
         width: 100% !important;
         margin: 0 auto !important;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
         background: #0f0f0f !important;
+        color: #e5e5e5 !important;
     }
     
     /* ============================================
@@ -216,28 +222,76 @@ custom_css = """
     }
     
     /* ============================================
-       CHATBOT
+       CHATBOT — Gradio 6.x compatible
        ============================================ */
     .chatbot {
         border-radius: 5px !important;
         background: #1a1a1a !important;
         border: none !important;
     }
-    
+
+    /* Gradio 6.x wraps messages in divs with these roles */
+    [data-testid="chatbot"] {
+        background: #1a1a1a !important;
+    }
+
+    /* All message bubbles */
     .message {
         border-radius: 10px !important;
         width: fit-content !important;
+        color: #e5e5e5 !important;
     }
-    
-    .message.user {
+
+    /* User bubble */
+    .message.user,
+    [data-testid="user"] .message,
+    div.user > div {
         background: #3b82f6 !important;
-        color: white !important;
+        color: #ffffff !important;
     }
-    
-    .message.bot {
+
+    /* Bot bubble */
+    .message.bot,
+    [data-testid="bot"] .message,
+    div.bot > div {
         background: #1f1f1f !important;
         color: #e5e5e5 !important;
         border: 1px solid #3f3f3f !important;
+    }
+
+    /* Gradio 6.x renders message text inside .prose */
+    .prose,
+    .prose p,
+    .prose li,
+    .prose span,
+    .prose code,
+    .prose pre,
+    .prose blockquote {
+        color: #e5e5e5 !important;
+        background: transparent !important;
+    }
+
+    .prose code,
+    .prose pre {
+        background: #2a2a2a !important;
+        color: #93c5fd !important;
+    }
+
+    /* Bubble border wrapper used in Gradio 6.x */
+    .message-bubble-border {
+        color: #e5e5e5 !important;
+    }
+
+    /* Catch-all: any text inside the chatbot panel */
+    [data-testid="chatbot"] *,
+    .chatbot * {
+        color: #e5e5e5 !important;
+    }
+
+    /* Re-assert user bubble white text (overrides catch-all above) */
+    .message.user *,
+    [data-testid="user"] * {
+        color: #ffffff !important;
     }
     
     /* ============================================
@@ -257,7 +311,8 @@ custom_css = """
     /* ============================================
        TYPOGRAPHY
        ============================================ */
-    h1, h2, h3, h4, h5, h6 {
+    h1, h2, h3, h4, h5, h6,
+    p, span, label, div, li {
         color: #e5e5e5 !important;
     }
     

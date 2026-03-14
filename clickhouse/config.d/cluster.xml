@@ -1,0 +1,34 @@
+<!-- Single-node "default" cluster — lets Langfuse use ON CLUSTER default + ReplicatedMergeTree -->
+<clickhouse>
+    <remote_servers>
+        <default>
+            <shard>
+                <replica>
+                    <host>clickhouse</host>
+                    <port>9000</port>
+                    <user>langfuse</user>
+                    <password>langfuse</password>
+                </replica>
+            </shard>
+        </default>
+    </remote_servers>
+
+    <!-- Point to local Keeper instance defined in keeper.xml -->
+    <zookeeper>
+        <node>
+            <host>clickhouse</host>
+            <port>9181</port>
+        </node>
+    </zookeeper>
+
+    <!-- Macros used by ReplicatedMergeTree paths -->
+    <macros>
+        <shard>01</shard>
+        <replica>01</replica>
+    </macros>
+
+    <!-- DDL task queue path in Keeper -->
+    <distributed_ddl>
+        <path>/clickhouse/task_queue/ddl</path>
+    </distributed_ddl>
+</clickhouse>
