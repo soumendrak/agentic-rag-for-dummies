@@ -1228,7 +1228,39 @@ Agent: [Retrieves and answers with specific information]
 
 ---
 
-## Troubleshooting
+## 📊 Observability Stack (OTel Pipeline)
+
+This project includes a full OpenTelemetry observability pipeline that demonstrates every concept from the [Practical Observability with Python](https://github.com/soumendrak/observability-engineering-series) series:
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| OTel Collector | 4317/4318 | Central pipeline: OTLP receive, PII scrub, tail sample, fan-out |
+| Jaeger | 16686 | Trace storage and search UI |
+| Prometheus | 9090 | Metrics store |
+| Grafana | 3001 | Dashboards (login: `admin`/`admin`) |
+
+**Pipeline:** `App → OTLP → Collector → Jaeger (traces) + Prometheus (metrics) + Grafana`
+
+The Collector applies:
+- **PII scrubbing** — redacts LLM prompts, completions, emails, SSNs
+- **Tail sampling** — keeps 100% of errors + slow traces, 5% of normal
+- **Batch processing** — efficient export to backends
+
+The app also exports to Arize Phoenix (`localhost:6006`) and Langfuse (`localhost:3000`, with API keys in `.env`).
+
+Structured logging via Loguru replaces bare `print()` calls — written as both human-readable console output and JSON-formatted log files for aggregation.
+
+### Start the full stack
+```bash
+docker compose up -d
+```
+
+### Access dashboards
+- Jaeger: http://localhost:16686
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3001 (admin/admin)
+- Arize Phoenix: http://localhost:6006
+- Langfuse: http://localhost:3000
 
 | Area | Common Problems | Suggested Solutions |
 |------|----------------|------------------|
