@@ -6,9 +6,16 @@
 #   https://github.com/langfuse/langfuse/blob/main/docker-compose.yml
 #
 # Services:
-#   Phoenix     → http://localhost:6006   (Arize Phoenix UI + OTLP)
-#   Langfuse    → http://localhost:3000   (Langfuse UI)
+#   OTel Collector → localhost:4318  (OTLP HTTP endpoint)
+#   Jaeger        → http://localhost:16686  (trace UI)
+#   Prometheus    → http://localhost:9090   (metrics store)
+#   Grafana       → http://localhost:3001   (dashboards: admin/admin)
+#   Phoenix       → http://localhost:6006   (Arize Phoenix UI + OTLP)
+#   Langfuse      → http://localhost:3000   (Langfuse UI)
 #   Langfuse OTLP endpoint: http://localhost:3000/api/public/otel/v1/traces
+#
+# Full observability pipeline:
+#   App → OTLP → Collector → Jaeger (traces) + Prometheus (metrics) + Grafana
 #
 # Backing services (internal only):
 #   PostgreSQL  → localhost:5432
@@ -25,6 +32,57 @@
 # ============================================================
 
 services:
+
+  # ----------------------------------------------------------
+  # OTEL COLLECTOR — central pipeline: receive → sample → PII scrub → fan-out
+  # ----------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    restart: unless-stopped
+    ports:
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+      - "8888:8888"    # collector self-metrics
+      - "13133:13133"  # health check
+    volumes:
+      - ./otel-collector/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+
+  # ----------------------------------------------------------
+  # JAEGER — trace storage & UI
+  # ----------------------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    restart: unless-stopped
+    ports:
+      - "16686:16686"  # UI
+      - "4317"         # OTLP gRPC (internal, consumed by otel-collector)
+
+  # ----------------------------------------------------------
+  # PROMETHEUS — metrics storage
+  # ----------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  # ----------------------------------------------------------
+  # GRAFANA — dashboards
+  # ----------------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    ports:
+      - "3001:3000"     # 3001 to avoid conflict with Langfuse on 3000
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: ""
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
 
   # ----------------------------------------------------------
   # PHOENIX — Arize observability
@@ -208,5 +266,7 @@ volumes:
   langfuse_postgres_data:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
+  langfuse_minio_data:
+  langfuse_redis_data:
   langfuse_minio_data:
   langfuse_redis_data:
